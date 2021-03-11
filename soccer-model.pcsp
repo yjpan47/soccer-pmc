@@ -1,0 +1,514 @@
+﻿//@@Soccer@@
+
+# import "PAT.Lib.Soccer";
+
+/// Field Constants
+# define LENGTH 3;
+# define WIDTH 2;
+
+# define MIN_X 0;
+# define MAX_X 3;
+# define MIN_Y 0;
+# define MAX_Y 2;
+
+# define A_GOAL_X 3;
+# define A_GOAL_Y 1;
+# define B_GOAL_X 0;
+# define B_GOAL_Y 1;
+
+/// Players Starting Locations
+# define A1_X 0;
+# define A1_Y 2;
+# define A2_X 0;
+# define A2_Y 0;
+
+# define B1_X 3;
+# define B1_Y 2;
+# define B2_X 3;
+# define B2_Y 0;
+
+/// Ball Starting Location
+# define BALL_X 1;
+# define BALL_Y 1;
+
+/// Player Skills -- currently only for A Team 
+# define A1_DRIBBLE_SKILL 80;
+# define A1_PASSING_SKILL 75;
+# define A1_SHOOTING_SKILL 90;
+# define A2_DRIBBLE_SKILL 110;
+# define A2_PASSING_SKILL 95;
+# define A2_SHOOTING_SKILL 60;
+
+enum{FREE_BALL, A1_BALL, A2_BALL, B1_BALL, B2_BALL};
+
+var A1 = [A1_X, A1_Y];
+var A2 = [A2_X, A2_Y];
+var B1 = [B1_X, B1_Y];
+var B2 = [B2_X, B2_Y];
+
+var ball = [BALL_X, BALL_Y];
+var possession = FREE_BALL;
+
+hvar AGoal = [A_GOAL_X, A_GOAL_Y];
+hvar BGoal = [B_GOAL_X, B_GOAL_Y];
+
+var<SoccerGame> soccerGame = new SoccerGame(LENGTH, WIDTH);
+
+hvar time = 900;
+var Ascore = 0;
+var Bscore = 0;
+
+Game() = [time > 0] A1Action()
+	 ||| [time > 0] A2Action()
+	 ||| [time > 0] B1Action()
+	 ||| [time > 0] B2Action()
+	 ||| [time <= 0] end -> Game();
+
+
+// A1 Actions
+
+A1Action() = [possession == A1_BALL] A1ActionWithBall()
+          [] [possession != A1_BALL] A1ActionWithoutBall();
+
+hvar A1_action_without_ball_prob[2];
+A1ActionWithoutBall() = {
+	A1_action_without_ball_prob = soccerGame.ActionWithoutBallProb(A1, ball);
+} -> pcase {
+	A1_action_without_ball_prob[0]: A1Stay()
+	A1_action_without_ball_prob[1]: A1Move()
+};
+
+hvar A1_action_with_ball_prob[4];
+A1ActionWithBall() = {
+	A1_action_with_ball_prob = soccerGame.ActionWithBallProb(A1, A2, AGoal);
+} -> pcase {
+	A1_action_with_ball_prob[0]: A1Stay()
+	A1_action_with_ball_prob[1]: A1Dribble() 
+	A1_action_with_ball_prob[2]: A1Pass()
+	A1_action_with_ball_prob[3]: A1Shoot()
+};
+
+A1Stay() = stay -> Game();
+
+hvar A1_move_prob[4];
+A1Move() = {
+	A1_move_prob = soccerGame.MoveProb(A1, ball);
+} -> pcase {
+	A1_move_prob[0]: moveUp{ A1[1] = A1[1] + 1; time--; } -> UpdatePossession()
+	A1_move_prob[1]: moveRight{ A1[0] = A1[0] + 1; time--; } -> UpdatePossession()
+	A1_move_prob[2]: MoveDown{ A1[1] = A1[1] - 1; time--; } -> UpdatePossession()
+	A1_move_prob[3]: MoveLeft{ A1[0] = A1[0] - 1; time--; } -> UpdatePossession()
+};
+
+hvar A1_dribble_prob[4];
+A1Dribble() = {
+	A1_dribble_prob = soccerGame.DribbleProb(A1, AGoal);
+} -> pcase {
+	A1_dribble_prob[0]: dribbleUp{ A1[1] = A1[1] + 1; ball[1] = A1[1]; time--; } -> A1MayLoseBall()
+	A1_dribble_prob[1]: dribbleRight{ A1[0] = A1[0] + 1; ball[0] = A1[0]; time--; } -> A1MayLoseBall()
+	A1_dribble_prob[2]: dribbleDown{ A1[1] = A1[1] - 1; ball[1] = A1[1]; time--; } -> A1MayLoseBall()
+	A1_dribble_prob[3]: dribbleLeft{ A1[0] = A1[0] - 1; ball[0] = A1[0]; time--; } -> A1MayLoseBall()
+};
+
+hvar A1_may_lose_ball_prob[2];
+A1MayLoseBall() = {
+	A1_may_lose_ball_prob = soccerGame.MayLoseBallProb(A1_DRIBBLE_SKILL);
+} -> pcase {
+	A1_may_lose_ball_prob[0]: keepBall -> Game()
+	A1_may_lose_ball_prob[1]: loseBall{ possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+hvar A1_pass_prob[3];
+A1Pass() = {
+	A1_pass_prob = soccerGame.PassProb(A1_PASSING_SKILL, A1, A2);
+} -> pcase {
+	A1_pass_prob[0]: passSuccess{ ball[0] = A2[0]; ball[1] = A2[1]; possession = A2_BALL; time--; } -> Game()
+	A1_pass_prob[1]: passFailOnKick{ ball[0] = A1[0]; ball[1] = A1[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+	A1_pass_prob[2]: passFailOnReceive{ ball[0] = A2[0]; ball[1] = A2[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+hvar A1_shoot_prob[3];
+A1Shoot() = {
+	A1_shoot_prob = soccerGame.ShootProb(A1_SHOOTING_SKILL, A1, AGoal);
+} -> pcase {
+	A1_shoot_prob[0]: goalSuccess{ Ascore++; time--; } -> Reset()
+	A1_shoot_prob[1]: goalFailOnKick{ ball[0] = A1[0]; ball[1] = A1[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+	A1_shoot_prob[2]: goalFailAtGoal{ ball[0] = A_GOAL_X; ball[1] = A_GOAL_Y; possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+// A2 Actions
+
+A2Action() = [possession == A2_BALL] A2ActionWithBall()
+          [] [possession != A2_BALL] A2ActionWithoutBall();
+
+hvar A2_action_without_ball_prob[2];
+A2ActionWithoutBall() = {
+	A2_action_without_ball_prob = soccerGame.ActionWithoutBallProb(A2, ball);
+} -> pcase {
+	A2_action_without_ball_prob[0]: A2Stay()
+	A2_action_without_ball_prob[1]: A2Move()
+};
+
+hvar A2_action_with_ball_prob[4];
+A2ActionWithBall() = {
+	A2_action_with_ball_prob = soccerGame.ActionWithBallProb(A2, A1, AGoal);
+} -> pcase {
+	A2_action_with_ball_prob[0]: A1Stay()
+	A2_action_with_ball_prob[1]: A1Dribble()
+	A2_action_with_ball_prob[2]: A1Pass()
+	A2_action_with_ball_prob[3]: A1Shoot()
+};
+
+A2Stay() = stay -> Game();
+
+hvar A2_move_prob[4];
+A2Move() = {
+	A2_move_prob = soccerGame.MoveProb(A2, ball);
+} -> pcase {
+	A2_move_prob[0]: moveUp{ A2[1] = A2[1] + 1; time--; } -> UpdatePossession()
+	A2_move_prob[1]: moveRight{ A2[0] = A2[0] + 1; time--; } -> UpdatePossession()
+	A2_move_prob[2]: MoveDown{ A2[1] = A2[1] - 1; time--; } -> UpdatePossession()
+	A2_move_prob[3]: MoveLeft{ A2[0] = A2[0] - 1; time--; } -> UpdatePossession()
+};
+
+hvar A2_dribble_prob[4];
+A2Dribble() = {
+	A2_dribble_prob = soccerGame.DribbleProb(A2, AGoal);
+} -> pcase {
+	A2_dribble_prob[0]: dribbleUp{ A2[1] = A2[1] + 1; ball[1] = A2[1]; time--; } -> A2MayLoseBall()
+	A2_dribble_prob[1]: dribbleRight{ A2[0] = A2[0] + 1; ball[0] = A2[0]; time--; } -> A2MayLoseBall()
+	A2_dribble_prob[2]: dribbleDown{ A2[1] = A2[1] - 1; ball[1] = A2[1]; time--; } -> A2MayLoseBall()
+	A2_dribble_prob[3]: dribbleLeft{ A2[0] = A2[0] - 1; ball[0] = A2[0]; time--; } -> A2MayLoseBall()
+};
+
+hvar A2_may_lose_ball_prob[2];
+A2MayLoseBall() = {
+	A2_may_lose_ball_prob = soccerGame.MayLoseBallProb(A2_DRIBBLE_SKILL);
+} -> pcase {
+	A2_may_lose_ball_prob[0]: keepBall -> Game()
+	A2_may_lose_ball_prob[1]: loseBall{ possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+hvar A2_pass_prob[3];
+A2Pass() = {
+	A2_pass_prob = soccerGame.PassProb(A2_PASSING_SKILL, A2, A1);
+} -> pcase {
+	A2_pass_prob[0]: passSuccess{ ball[0] = A1[0]; ball[1] = A1[1]; possession = A1_BALL; time--; } -> Game()
+	A2_pass_prob[1]: passFailOnKick{ ball[0] = A2[0]; ball[1] = A2[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+	A2_pass_prob[2]: passFailOnReceive{ ball[0] = A1[0]; ball[1] = A1[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+hvar A2_shoot_prob[3];
+A2Shoot() = {
+	A2_shoot_prob = soccerGame.ShootProb(A2_SHOOTING_SKILL, A2, AGoal);
+} -> pcase {
+	A2_shoot_prob[0]: goalSuccess{ Ascore++; time--; } -> Reset()
+	A2_shoot_prob[1]: goalFailOnKick{ ball[0] = A2[0]; ball[1] = A2[1]; possession = FREE_BALL; time--; } -> UpdatePossession()
+	A2_shoot_prob[2]: goalFailAtGoal{ ball[0] = A_GOAL_X; ball[1] = A_GOAL_Y; possession = FREE_BALL; time--; } -> UpdatePossession()
+};
+
+// B1 Actions
+
+B1Action() = [possession == B1_BALL] B1ActionWithBall()
+          [] [possession != B1_BALL] B1ActionWithoutBall();
+
+hvar B1_action_without_ball_prob = [20, 80];
+B1ActionWithoutBall() = pcase {
+							1: B1Stay()
+							1: B1Move()
+						};
+
+hvar B1_action_with_ball_prob = [20, 30, 30, 20];
+B1ActionWithBall() = pcase {
+						B1_action_with_ball_prob[0]: B1Stay()
+						B1_action_with_ball_prob[1]: B1Dribble()
+						B1_action_with_ball_prob[2]: B1Pass()
+						B1_action_with_ball_prob[3]: B1Shoot()
+					};
+
+B1Stay() = stay -> Game();
+
+hvar B1_move_prob = [25, 25, 25, 25];
+B1Move() = pcase {
+			B1_move_prob[0]: MoveUp{
+				if (B1[1] + 1 <= MAX_Y) {
+					B1[1] = B1[1] + 1
+				}
+				time--;
+			} -> UpdatePossession()
+			
+			B1_move_prob[1]: moveRight{
+				if (B1[0] + 1 <= MAX_X) {
+					B1[0] = B1[0] + 1;
+				}
+				time--;
+			} -> UpdatePossession()
+			
+			B1_move_prob[2]: moveDown{
+				if (B1[1] - 1 >= MIN_Y) {
+					B1[1] = B1[1] - 1;
+				}
+				time--;
+			} -> UpdatePossession()
+			
+			B1_move_prob[3]: moveLeft{
+				if (B1[0] - 1 >= MIN_X) {
+					 B1[0] = B1[0] - 1;
+				}
+				time--;
+			} -> UpdatePossession()
+		};
+
+hvar B1_dribble_prob = [25, 25, 25, 25];
+B1Dribble() = pcase {
+				B1_dribble_prob[0]: dribbleUp{
+					if (B1[1] + 1 <= MAX_Y) {
+						B1[1] = B1[1] + 1;
+						ball[1] = B1[1];
+					}
+					time--;
+				} -> B1MayLoseBall()
+				
+				B1_dribble_prob[1]: dribbleRight{
+					if (B1[0] + 1 <= MAX_X) {
+						B1[0] = B1[0] + 1;
+						ball[0] = B1[0];
+					}
+					time--;
+				} -> B1MayLoseBall()
+				
+				B1_dribble_prob[2]: dribbleDown{
+					if (B1[1] - 1 >= MIN_Y) {
+						B1[1] = B1[1] - 1;
+						ball[1] = B1[1];
+					}
+					time--;
+				} -> B1MayLoseBall()
+				
+				B1_dribble_prob[3]: dribbleLeft{
+					if (B1[0] - 1 >= MIN_X) {
+						B1[0] = B1[0] - 1;
+						ball[0] = B1[0]; 
+					}
+					time--;
+				} -> B1MayLoseBall()
+			};
+
+hvar B1_may_lose_ball_prob = [80, 20];
+B1MayLoseBall() = pcase {
+					B1_may_lose_ball_prob[0]: keepBall -> Game()
+					B1_may_lose_ball_prob[1]: loseBall{
+						possession = FREE_BALL;
+						time--;
+					} -> UpdatePossession()
+				};
+
+hvar B1_pass_prob = [70, 20, 30];
+B1Pass() = pcase {
+			B1_pass_prob[0]: passSuccess{
+				ball[0] = B2[0];
+				ball[1] = B2[1];
+				possession = B2_BALL;
+				time--;
+			} -> Game()
+			
+			B1_pass_prob[1]: passFailOnKick{
+				ball[0] = B1[0];
+				ball[1] = B1[1];
+				possession = FREE_BALL;
+				time--;
+			} -> UpdatePossession()
+			
+			B1_pass_prob[2]: passFailOnReceive{
+				ball[0] = B2[0];
+				ball[1] = B2[1];
+				possession = FREE_BALL;
+				time--;
+			} -> UpdatePossession()
+		};
+
+hvar B1_shoot_prob = [20, 40, 40];
+B1Shoot() = pcase {
+				B1_shoot_prob[0]: goalSuccess{
+			    	Bscore++;
+			      	time--;
+				} -> Reset()
+				
+				B1_shoot_prob[1]: goalFailOnKick{
+					ball[0] = B1[0];
+					ball[1] = B1[1];
+					possession = FREE_BALL;
+					time--;
+				} -> UpdatePossession()
+				
+				B1_shoot_prob[2]: goalFailAtGoal{
+					  ball[0] = B_GOAL_X;
+					  ball[1] = B_GOAL_Y;
+					  possession = FREE_BALL;
+					  time--;
+				} -> UpdatePossession()
+			};
+
+
+// B2 Actions
+
+B2Action() = [possession == B2_BALL] B2ActionWithBall()
+          [] [possession != B2_BALL] B2ActionWithoutBall();
+
+hvar B2_action_without_ball_prob = [10, 90];
+B2ActionWithoutBall() = pcase {
+							B2_action_without_ball_prob[0]: B2Stay()
+							B2_action_without_ball_prob[1]: B2Move()
+						};
+
+hvar B2_action_with_ball_prob = [10, 30, 40, 20];
+B2ActionWithBall() = pcase {
+						B2_action_with_ball_prob[0]: B2Stay()
+						B2_action_with_ball_prob[1]: B2Dribble()
+						B2_action_with_ball_prob[2]: B2Pass()
+						B2_action_with_ball_prob[3]: B2Shoot()
+					};
+
+B2Stay() = stay -> Game();
+
+hvar B2_move_prob = [25, 25, 25, 25];
+B2Move() = pcase {
+			B2_move_prob[0]: moveUp{
+				if (B2[1] + 1 <= MAX_Y) {
+					B2[1] = B2[1] + 1
+				}
+				time--;
+			} -> UpdatePossession()
+
+			B2_move_prob[1]: moveRight{
+				if (B2[0] + 1 <= MAX_X) {
+					B2[0] = B2[0] + 1;
+				}
+				time--;
+			} -> UpdatePossession()
+
+			B2_move_prob[2]: moveDown{
+				if (B2[1] - 1 >= MIN_Y) {
+					B2[1] = B2[1] - 1;
+				}
+				time--;
+			} -> UpdatePossession()
+
+			B2_move_prob[3]: moveLeft{
+				if (B2[0] - 1 >= MIN_X) {
+					 B2[0] = B2[0] - 1;
+				}
+				time--;
+			} -> UpdatePossession()
+		};
+
+hvar B2_dribble_prob = [25, 25, 25, 25];
+B2Dribble() = pcase {
+				B2_dribble_prob[0]: dribbleUp{
+					if (B2[1] + 1 <= MAX_Y) {
+						B2[1] = B2[1] + 1;
+						ball[1] = B2[1];
+					}
+					time--;
+				} -> B2MayLoseBall()
+
+				B2_dribble_prob[1]: dribbleRight{
+					if (B2[0] + 1 <= MAX_X) {
+						B2[0] = B2[0] + 1;
+						ball[0] = B2[0];
+					}
+					time--;
+				} -> B2MayLoseBall()
+				
+				B2_dribble_prob[2]: dribbleDown{
+					if (B2[1] - 1 >= MIN_Y) {
+						B2[1] = B2[1] - 1;
+						ball[1] = B2[1];
+					}
+					time--;
+				} -> B2MayLoseBall()
+
+				B2_dribble_prob[3]: dribbleLeft{
+					if (B2[0] - 1 >= MIN_X) {
+						B2[0] = B2[0] - 1;
+						ball[0] = B2[0]; 
+					}
+					time--;
+				} -> B2MayLoseBall()
+			};
+
+hvar B2_may_lose_ball_prob = [85, 15];
+B2MayLoseBall() = pcase {
+					B2_may_lose_ball_prob[0]: keepBall -> Game()
+					B2_may_lose_ball_prob[1]: loseBall{
+						possession = FREE_BALL;
+						time--;
+					} -> UpdatePossession()
+				};
+
+hvar B2_pass_prob = [80, 20, 20];
+B2Pass() = pcase {
+			B2_pass_prob[0]: passSuccess{
+				ball[0] = B1[0];
+				ball[1] = B1[1];
+				possession = B1_BALL;
+				time--;
+			} -> Game()
+			
+			B2_pass_prob[1]: passFailOnKick{
+				ball[0] = B2[0];
+				ball[1] = B2[1];
+				possession = FREE_BALL;
+				time--;
+			} -> UpdatePossession()
+			
+			B2_pass_prob[2]: passFailOnReceive{
+				ball[0] = B1[0];
+				ball[1] = B1[1];
+				possession = FREE_BALL;
+				time--;
+			} -> UpdatePossession()
+		};
+
+hvar B2_shoot_prob = [30, 30, 40];
+B2Shoot() = pcase {
+				B2_shoot_prob[0]: goalSuccess{
+				      Bscore++;
+				      time--;
+				   } -> Reset()
+				B2_shoot_prob[1]: goalFailOnKick{
+					  ball[0] = B2[0];
+					  ball[1] = B2[1];
+					  possession = FREE_BALL;
+					  time--;
+				} -> UpdatePossession()
+				B2_shoot_prob[2]: goalFailAtGoal{
+					  ball[0] = B_GOAL_X;
+					  ball[1] = B_GOAL_Y;
+					  possession = FREE_BALL;
+					  time--;
+				} -> UpdatePossession()
+			};
+
+// Universal 
+
+Reset() = reset{
+			A1[0] = A1_X; A1[1] = A1_Y;
+			A2[0] = A2_X; A2[1] = A2_Y;
+			B1[0] = B1_X; B1[1] = B1_Y;
+			B2[0] = B2_X; B2[1] = B2_Y;
+			ball[0] = BALL_X; ball[1] = BALL_Y;
+            possession = FREE_BALL;
+		} -> Game();
+
+UpdatePossession() = [possession == FREE_BALL && A1 == ball] giveBalltoA1{possession = A1_BALL; time--;} -> Game()
+			 	  [] [possession == FREE_BALL && A2 == ball] giveBalltoA2{possession = A2_BALL; time--;} -> Game()
+				  [] [possession == FREE_BALL && B1 == ball] giveBalltoB1{possession = B1_BALL; time--;} -> Game()
+				  [] [possession == FREE_BALL && B2 == ball] giveBalltoB2{possession = B2_BALL; time--;} -> Game()
+				  [] [possession == FREE_BALL] remainFreeBall{possession = FREE_BALL; time--} -> Game()
+				  [] [possession != FREE_BALL] keepPossession -> Game();
+
+# define goal (Bscore == 1);
+# assert Game() deadlockfree;
+# assert Game() reaches goal with prob;
+
